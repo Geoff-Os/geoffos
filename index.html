@@ -1,0 +1,1080 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#050a0f">
+<title>GeoffOS</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-192.png">
+<!-- Inter only loads where SF is absent (i.e. your Android phone). Cached by
+     the service worker after first visit, so it costs one download ever. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap">
+<style>
+:root{
+  --bg:#050a0f;
+  --panel:rgba(10,24,34,.72);
+  --panel-solid:#0a1822;
+  --line:rgba(111,227,255,.28);
+  --line-hot:rgba(111,227,255,.75);
+  --cyan:#6fe3ff;
+  --cyan-dim:#3f93ab;
+  --amber:#ffb648;
+  --red:#ff6b6b;
+  --green:#7cffb2;
+  --text:#d7f2fb;
+  --muted:#7fa3b3;
+  /* San Francisco where it exists (your Mac, any iOS device). Android has no
+     SF and never will — Apple doesn't license it — so Inter is loaded as the
+     fallback because it's the closest match in metrics and feel. On your phone
+     you'll be seeing Inter; on the Mac, real SF. */
+  --mono:ui-monospace,"SF Mono","SFMono-Regular",Menlo,"Roboto Mono",Consolas,monospace;
+  --sans:-apple-system,BlinkMacSystemFont,"SF Pro Text","SF Pro Display",
+         "Inter var","Inter",system-ui,"Segoe UI",Roboto,sans-serif;
+
+  /* liquid glass */
+  --glass:linear-gradient(155deg,rgba(120,200,230,.14) 0%,rgba(70,130,160,.07) 42%,rgba(10,25,35,.16) 100%);
+  --glass-edge:rgba(180,235,255,.26);
+  --blur:blur(22px) saturate(175%);
+  --r:20px;      /* tile / panel radius */
+  --r-sm:14px;   /* button radius */
+  /* the two inset lines that sell the effect: bright top edge, dark bottom */
+  --lens:inset 0 1px 0 rgba(255,255,255,.42), inset 0 -1px 0 rgba(0,0,0,.30),
+         inset 0 0 22px rgba(111,227,255,.07);
+  --lift:0 10px 30px rgba(0,0,0,.46), 0 2px 8px rgba(0,0,0,.30);
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;padding:0;height:100%}
+body{
+  background:var(--bg);
+  color:var(--text);
+  font-family:var(--sans);
+  font-size:15px;
+  line-height:1.5;
+  letter-spacing:-.011em;                 /* SF wants slightly negative tracking */
+  -webkit-font-smoothing:antialiased;
+  -moz-osx-font-smoothing:grayscale;
+  font-feature-settings:"cv11","ss01";    /* SF/Inter: single-storey a, cleaner digits */
+  overflow-x:hidden;
+  padding-bottom:env(safe-area-inset-bottom);
+}
+/* Layer 1 — colour field. Glass needs something behind it to bend, otherwise
+   the blur has nothing to work with and the panels just look grey. */
+body::after{
+  content:"";position:fixed;inset:-15%;pointer-events:none;z-index:0;
+  background:
+    radial-gradient(38% 30% at 14% 8%,  rgba(111,227,255,.30), transparent 70%),
+    radial-gradient(34% 28% at 88% 22%, rgba(64,140,255,.22),  transparent 72%),
+    radial-gradient(46% 34% at 50% 96%, rgba(0,190,190,.16),   transparent 72%),
+    radial-gradient(30% 26% at 78% 68%, rgba(160,110,255,.13), transparent 72%);
+  filter:blur(46px);
+  animation:drift 34s ease-in-out infinite alternate;
+}
+@keyframes drift{
+  from{transform:translate3d(0,0,0) scale(1)}
+  to{transform:translate3d(-3%,2%,0) scale(1.07)}
+}
+@media (prefers-reduced-motion:reduce){body::after{animation:none}}
+
+/* Layer 2 — the Halo bit: scanlines and grid, kept faint enough to read through */
+body::before{
+  content:"";position:fixed;inset:0;pointer-events:none;z-index:1;
+  background:
+    linear-gradient(rgba(111,227,255,.026) 1px, transparent 1px) 0 0/100% 3px,
+    linear-gradient(90deg, rgba(111,227,255,.018) 1px, transparent 1px) 0 0/34px 100%;
+}
+body.plain::before,body.plain::after{background:none;animation:none}
+#app{position:relative;z-index:1;max-width:760px;margin:0 auto;padding:0 14px 120px}
+
+/* ---------------------------------------------------------------- chrome */
+header.hud{
+  position:sticky;top:0;z-index:20;
+  margin:0 -14px 14px;padding:calc(env(safe-area-inset-top) + 10px) 14px 10px;
+  background:linear-gradient(180deg,rgba(5,10,15,.80),rgba(5,10,15,.42));
+  -webkit-backdrop-filter:blur(24px) saturate(180%);backdrop-filter:blur(24px) saturate(180%);
+  border-bottom:1px solid rgba(180,235,255,.16);
+  box-shadow:0 1px 0 rgba(255,255,255,.07);
+  display:flex;align-items:center;gap:10px;
+}
+.brand{font-family:var(--mono);font-size:13px;letter-spacing:.22em;color:var(--cyan);
+  text-shadow:0 0 12px rgba(111,227,255,.55);font-weight:600}
+.brand small{display:block;font-size:9px;letter-spacing:.16em;color:var(--cyan-dim);
+  text-shadow:none;font-weight:400;margin-top:2px}
+.spacer{flex:1}
+.hud-btn{
+  font-family:var(--mono);font-size:11px;letter-spacing:.1em;
+  background:var(--glass);color:var(--text);border:1px solid var(--glass-edge);
+  padding:8px 12px;cursor:pointer;border-radius:11px;
+  -webkit-backdrop-filter:var(--blur);backdrop-filter:var(--blur);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.30);
+  transition:transform .15s,background .15s;
+}
+.hud-btn:active{transform:scale(.94);background:rgba(111,227,255,.24);color:#fff}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--muted);flex:none}
+.dot.ok{background:var(--green);box-shadow:0 0 9px var(--green)}
+.dot.bad{background:var(--red);box-shadow:0 0 9px var(--red)}
+.dot.warn{background:var(--amber);box-shadow:0 0 9px var(--amber)}
+
+/* ----------------------------------------------------------------- panel */
+/* The hybrid: liquid-glass body (rounded, frosted, lensed edges) keeping the
+   Halo tell — a glowing status bar welded to the left edge. */
+.panel{
+  position:relative;margin-bottom:12px;padding:15px 16px;
+  background:var(--glass);
+  -webkit-backdrop-filter:var(--blur);backdrop-filter:var(--blur);
+  border:1px solid var(--glass-edge);
+  border-radius:var(--r);
+  box-shadow:var(--lens),var(--lift);
+  overflow:hidden;
+}
+/* specular sweep across the top third — the highlight that reads as "glass" */
+.panel::before{
+  content:"";position:absolute;left:0;right:0;top:0;height:52%;pointer-events:none;
+  background:linear-gradient(180deg,rgba(255,255,255,.13),rgba(255,255,255,.02) 55%,transparent);
+  border-radius:var(--r) var(--r) 40% 40%/var(--r) var(--r) 22px 22px;
+}
+.panel::after{
+  content:"";position:absolute;left:0;top:14px;width:3px;height:36px;border-radius:0 3px 3px 0;
+  background:var(--cyan);box-shadow:0 0 14px var(--cyan);
+}
+.panel.warnbar::after{background:var(--amber);box-shadow:0 0 14px var(--amber)}
+.panel.hotbar::after{background:var(--red);box-shadow:0 0 14px var(--red)}
+.label{font-family:var(--mono);font-size:10px;letter-spacing:.19em;color:var(--cyan-dim);
+  text-transform:uppercase;margin:0 0 5px}
+h2.sec{font-family:var(--mono);font-size:12px;letter-spacing:.2em;color:var(--cyan);
+  text-transform:uppercase;margin:22px 0 10px;display:flex;align-items:center;gap:9px}
+h2.sec::after{content:"";flex:1;height:1px;background:var(--line)}
+
+/* ------------------------------------------------------------ tile grid */
+.tiles{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+.tile{
+  position:relative;overflow:hidden;
+  background:var(--glass);
+  -webkit-backdrop-filter:var(--blur);backdrop-filter:var(--blur);
+  border:1px solid var(--glass-edge);
+  border-radius:var(--r);
+  box-shadow:var(--lens),var(--lift);
+  padding:15px;text-align:left;cursor:pointer;color:inherit;font:inherit;
+  min-height:110px;display:flex;flex-direction:column;justify-content:space-between;
+  transition:transform .18s cubic-bezier(.2,.8,.3,1),box-shadow .18s,border-color .18s;
+}
+.tile::before{
+  content:"";position:absolute;left:0;right:0;top:0;height:50%;pointer-events:none;
+  background:linear-gradient(180deg,rgba(255,255,255,.15),rgba(255,255,255,.02) 58%,transparent);
+  border-radius:var(--r) var(--r) 40% 40%/var(--r) var(--r) 20px 20px;
+}
+/* press: squash slightly and pull the light in, the way a real lens would */
+.tile:active{
+  transform:scale(.972);
+  border-color:var(--line-hot);
+  box-shadow:var(--lens),0 3px 12px rgba(0,0,0,.4),0 0 26px rgba(111,227,255,.22);
+}
+.tile[disabled]{opacity:.34;cursor:default;box-shadow:var(--lens)}
+.tile[disabled]::before{opacity:.4}
+.tile .big{font-family:var(--mono);font-size:30px;line-height:1;color:var(--cyan);
+  text-shadow:0 0 14px rgba(111,227,255,.45)}
+.tile .big.zero{color:var(--muted);text-shadow:none}
+.tile .name{font-family:var(--mono);font-size:10px;letter-spacing:.16em;color:var(--muted);
+  text-transform:uppercase}
+.tile .sub{font-size:11px;color:var(--muted);margin-top:3px}
+
+/* ---------------------------------------------------------------- chips */
+.chips{display:flex;gap:6px;overflow-x:auto;padding:2px 0 10px;scrollbar-width:none}
+.chips::-webkit-scrollbar{display:none}
+.chip{
+  flex:none;font-family:var(--mono);font-size:10px;letter-spacing:.11em;
+  text-transform:uppercase;padding:8px 13px;cursor:pointer;border-radius:999px;
+  background:var(--glass);color:var(--text);border:1px solid var(--glass-edge);
+  -webkit-backdrop-filter:var(--blur);backdrop-filter:var(--blur);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.26);
+  transition:transform .14s,background .14s;
+}
+.chip:active{transform:scale(.94)}
+.chip.on{
+  color:#eafcff;font-weight:600;border-color:rgba(111,227,255,.75);
+  background:linear-gradient(155deg,rgba(111,227,255,.46),rgba(20,90,120,.28));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.45),0 0 18px rgba(111,227,255,.30);
+}
+.tag{
+  display:inline-block;font-family:var(--mono);font-size:9px;letter-spacing:.13em;
+  text-transform:uppercase;padding:4px 9px;border:1px solid currentColor;
+  border-radius:999px;background:rgba(255,255,255,.05);
+}
+.t-high{color:var(--red)} .t-medium{color:var(--amber)} .t-low{color:var(--muted)}
+.t-type{color:var(--cyan-dim)}
+
+/* ----------------------------------------------------------------- card */
+.card .who{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:3px}
+.card .who strong{font-size:18px;color:#fff;font-weight:600;letter-spacing:-.02em}
+.card .who span{font-family:var(--mono);font-size:11px;color:var(--cyan-dim)}
+.meta{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0 12px}
+.field{margin:11px 0}
+.field .label{margin-bottom:3px}
+.field p{margin:0;font-size:14px}
+.quote{border-left:2px solid var(--line);padding-left:10px;color:var(--muted);
+  font-size:13px;font-style:italic}
+details summary{font-family:var(--mono);font-size:10px;letter-spacing:.15em;
+  color:var(--cyan-dim);text-transform:uppercase;cursor:pointer;padding:5px 0}
+details[open] summary{color:var(--cyan)}
+details .body{font-size:13px;color:var(--muted);padding:4px 0 2px}
+.decision{color:var(--amber);font-size:14px}
+
+/* Inputs read as recessed glass — light from below rather than above, so they
+   sit *into* the panel instead of floating on it like the buttons. */
+textarea,select,input[type=text],input[type=url],input[type=password]{
+  width:100%;color:var(--text);
+  background:linear-gradient(180deg,rgba(0,0,0,.34),rgba(0,0,0,.18));
+  border:1px solid rgba(180,235,255,.20);padding:12px;
+  font-family:var(--sans);font-size:14px;border-radius:var(--r-sm);
+  -webkit-appearance:none;appearance:none;
+  box-shadow:inset 0 2px 6px rgba(0,0,0,.34),inset 0 -1px 0 rgba(255,255,255,.09);
+  transition:border-color .15s,box-shadow .15s;
+}
+select{font-family:var(--mono);font-size:12px;letter-spacing:.08em}
+textarea{resize:vertical;min-height:92px;line-height:1.55}
+textarea:focus,select:focus,input:focus{
+  outline:none;border-color:rgba(111,227,255,.72);
+  box-shadow:inset 0 2px 6px rgba(0,0,0,.30),0 0 0 3px rgba(111,227,255,.16);
+}
+
+.actions{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:14px}
+.btn{
+  position:relative;overflow:hidden;
+  font-family:var(--mono);font-size:12px;letter-spacing:.13em;text-transform:uppercase;
+  padding:16px 10px;cursor:pointer;border:1px solid;font-weight:600;
+  border-radius:var(--r-sm);
+  -webkit-backdrop-filter:var(--blur);backdrop-filter:var(--blur);
+  box-shadow:var(--lens),0 6px 18px rgba(0,0,0,.34);
+  transition:transform .15s cubic-bezier(.2,.8,.3,1),box-shadow .15s,background .15s;
+}
+.btn::before{
+  content:"";position:absolute;left:0;right:0;top:0;height:50%;pointer-events:none;
+  background:linear-gradient(180deg,rgba(255,255,255,.24),rgba(255,255,255,.03) 60%,transparent);
+  border-radius:var(--r-sm) var(--r-sm) 40% 40%/var(--r-sm) var(--r-sm) 14px 14px;
+}
+.btn:active{transform:scale(.965);box-shadow:var(--lens),0 2px 7px rgba(0,0,0,.4)}
+
+/* tinted glass rather than flat fills — the colour sits in the pane */
+.btn-approve{
+  color:#c8ffe2;border-color:rgba(124,255,178,.55);
+  background:linear-gradient(155deg,rgba(124,255,178,.30),rgba(40,150,105,.14));
+}
+.btn-approve:active{background:linear-gradient(155deg,rgba(124,255,178,.52),rgba(40,150,105,.30))}
+.btn-redraft{
+  color:#ffe2bb;border-color:rgba(255,182,72,.55);
+  background:linear-gradient(155deg,rgba(255,182,72,.28),rgba(150,95,20,.13));
+}
+.btn-redraft:active{background:linear-gradient(155deg,rgba(255,182,72,.50),rgba(150,95,20,.28))}
+.btn-wide{
+  grid-column:1/-1;color:var(--text);border-color:var(--glass-edge);
+  background:var(--glass);
+}
+.btn-wide:active{background:linear-gradient(155deg,rgba(111,227,255,.26),rgba(20,60,80,.16))}
+.btn:disabled{opacity:.4;cursor:default}
+
+/* ---------------------------------------------------------------- inbox */
+.mail{padding:11px 0;border-bottom:1px solid rgba(111,227,255,.13)}
+.mail:last-child{border-bottom:none}
+.mail .from{font-family:var(--mono);font-size:10px;letter-spacing:.09em;color:var(--cyan-dim);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mail .subj{font-size:14px;color:#fff;margin:2px 0}
+.mail .snip{font-size:12px;color:var(--muted);display:-webkit-box;-webkit-line-clamp:2;
+  -webkit-box-orient:vertical;overflow:hidden}
+
+/* ----------------------------------------------------------------- mic */
+#mic{
+  position:fixed;right:16px;bottom:calc(20px + env(safe-area-inset-bottom));z-index:40;
+  width:62px;height:62px;border-radius:50%;
+  border:1px solid rgba(180,235,255,.42);
+  background:linear-gradient(155deg,rgba(140,215,240,.30),rgba(20,60,85,.22));
+  -webkit-backdrop-filter:var(--blur);backdrop-filter:var(--blur);
+  color:#eafcff;font-size:24px;cursor:pointer;
+  box-shadow:var(--lens),0 10px 26px rgba(0,0,0,.48),0 0 26px rgba(111,227,255,.24);
+  display:flex;align-items:center;justify-content:center;
+  transition:transform .15s cubic-bezier(.2,.8,.3,1);
+}
+#mic:active{transform:scale(.92)}
+#mic.live{
+  background:linear-gradient(155deg,rgba(111,227,255,.72),rgba(40,140,180,.55));
+  color:#04141c;animation:pulse 1.1s infinite;
+}
+@keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(111,227,255,.6)}
+  50%{box-shadow:0 0 0 15px rgba(111,227,255,0)}}
+#voicelog{
+  position:fixed;left:14px;right:88px;bottom:calc(24px + env(safe-area-inset-bottom));z-index:39;
+  background:var(--glass);border:1px solid var(--glass-edge);padding:11px 14px;
+  -webkit-backdrop-filter:var(--blur);backdrop-filter:var(--blur);
+  box-shadow:var(--lens),var(--lift);border-radius:var(--r-sm);
+  font-family:var(--mono);font-size:11px;line-height:1.5;display:none;
+}
+#voicelog.show{display:block}
+#voicelog b{color:var(--cyan);font-weight:600}
+
+/* --------------------------------------------------------------- toasts */
+#toast{position:fixed;left:50%;transform:translateX(-50%);bottom:96px;z-index:60;
+  display:flex;flex-direction:column;gap:6px;align-items:center;pointer-events:none}
+.toast{font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;
+  background:var(--glass);border:1px solid rgba(111,227,255,.55);color:#eafcff;
+  -webkit-backdrop-filter:var(--blur);backdrop-filter:var(--blur);
+  padding:11px 17px;border-radius:999px;
+  box-shadow:var(--lens),0 8px 24px rgba(0,0,0,.55);
+  animation:toastin .26s cubic-bezier(.2,.8,.3,1)}
+@keyframes toastin{from{opacity:0;transform:translateY(8px) scale(.94)}
+  to{opacity:1;transform:none}}
+.toast.bad{border-color:rgba(255,107,107,.65);color:#ffd6d6}
+.toast.good{border-color:rgba(124,255,178,.65);color:#d6ffe8}
+
+/* -------------------------------------------------- daylight / plain mode */
+/* Glass is gorgeous indoors and unreadable in sun: translucency destroys
+   contrast exactly when you need it most. This mode makes every surface
+   opaque, kills the blur (which is also the main battery cost) and keeps
+   only the Halo colour. Same layout, no reflow. */
+body.plain .panel,
+body.plain .tile,
+body.plain .btn,
+body.plain .chip,
+body.plain .hud-btn,
+body.plain #voicelog,
+body.plain #mic,
+body.plain .toast,
+body.plain header.hud{
+  -webkit-backdrop-filter:none;backdrop-filter:none;
+  background:#0b1a24;
+  box-shadow:none;
+  border-color:rgba(111,227,255,.42);
+}
+body.plain .panel::before,
+body.plain .tile::before,
+body.plain .btn::before{display:none}
+body.plain .chip.on{background:var(--cyan);color:#04141c}
+body.plain .btn-approve{background:#123626;color:#a9ffcf;border-color:var(--green)}
+body.plain .btn-redraft{background:#3a2a10;color:#ffd79a;border-color:var(--amber)}
+body.plain .brand,body.plain .panel::after{text-shadow:none}
+body.plain textarea,body.plain select,body.plain input{background:#04101a;box-shadow:none}
+
+/* Very old browsers with no backdrop-filter get flat panels rather than
+   near-invisible ones. */
+@supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){
+  .panel,.tile,.btn,.chip,.hud-btn,#voicelog,.toast{background:#0d1e29}
+}
+
+.empty{text-align:center;padding:44px 18px;color:var(--muted);font-family:var(--mono);
+  font-size:11px;letter-spacing:.15em;text-transform:uppercase}
+.hide{display:none !important}
+.note{font-size:12px;color:var(--muted);margin:6px 0 0}
+a{color:var(--cyan)}
+</style>
+</head>
+<body>
+
+<header class="hud">
+  <div class="brand">GEOFF<span style="color:var(--text)">OS</span><small id="clock">—</small></div>
+  <div class="spacer"></div>
+  <div class="dot" id="netdot" title="link status"></div>
+  <button class="hud-btn" id="btnBack" style="display:none">◄ BACK</button>
+  <button class="hud-btn" id="btnSync">SYNC</button>
+  <button class="hud-btn" id="btnCfg">CFG</button>
+</header>
+
+<div id="app">
+
+  <!-- ===================================================== HOME ======= -->
+  <section id="view-home">
+    <div class="panel" id="statusPanel">
+      <p class="label">System status</p>
+      <p id="statusText" style="margin:0;font-size:14px">Standing by.</p>
+    </div>
+
+    <h2 class="sec">Modules</h2>
+    <div class="tiles">
+      <button class="tile" data-go="triage">
+        <div><div class="big zero" id="tCountTriage">–</div></div>
+        <div><div class="name">Triage</div><div class="sub" id="tSubTriage">enquiries awaiting you</div></div>
+      </button>
+      <button class="tile" data-go="inbox">
+        <div><div class="big zero" id="tCountInbox">–</div></div>
+        <div><div class="name">Inbox</div><div class="sub" id="tSubInbox">unread, last 7 days</div></div>
+      </button>
+      <button class="tile" disabled>
+        <div><div class="big zero">—</div></div>
+        <div><div class="name">Tasks</div><div class="sub">module offline</div></div>
+      </button>
+      <button class="tile" disabled>
+        <div><div class="big zero">—</div></div>
+        <div><div class="name">Bills</div><div class="sub">module offline</div></div>
+      </button>
+      <button class="tile" disabled>
+        <div><div class="big zero">—</div></div>
+        <div><div class="name">Habits</div><div class="sub">module offline</div></div>
+      </button>
+      <button class="tile" disabled>
+        <div><div class="big zero">—</div></div>
+        <div><div class="name">Shared</div><div class="sub">module offline</div></div>
+      </button>
+    </div>
+    <p class="note">Offline modules are placeholders. Each one gets built and switched on separately.</p>
+  </section>
+
+  <!-- =================================================== TRIAGE ======= -->
+  <section id="view-triage" class="hide">
+    <div class="chips" id="triageFilters"></div>
+    <div id="triageList"></div>
+  </section>
+
+  <!-- ==================================================== INBOX ======= -->
+  <section id="view-inbox" class="hide">
+    <div class="panel">
+      <p class="label">Inbox digest</p>
+      <div id="inboxList"><div class="empty">No data yet — hit sync</div></div>
+    </div>
+    <p class="note">Read-only for now. Snippets only, so the payload stays small on mobile data.</p>
+  </section>
+
+  <!-- ===================================================== CFG ======== -->
+  <section id="view-cfg" class="hide">
+    <div class="panel">
+      <p class="label">Backend link</p>
+      <div class="field">
+        <p class="label">Apps Script web app URL</p>
+        <input type="url" id="cfgUrl" placeholder="https://script.google.com/macros/s/.../exec" autocomplete="off">
+      </div>
+      <div class="field">
+        <p class="label">Token</p>
+        <input type="text" id="cfgToken" placeholder="paste the token from setup_generateToken" autocomplete="off">
+      </div>
+      <div class="actions">
+        <button class="btn btn-approve" id="cfgSave">Save + test</button>
+        <button class="btn btn-redraft" id="cfgClear">Clear</button>
+      </div>
+      <p class="note">Stored only on this device. Anyone holding both the URL and the token can read this sheet and an inbox digest — treat them like a password.</p>
+    </div>
+    <div class="panel">
+      <p class="label">Display</p>
+      <div class="actions">
+        <button class="btn btn-wide" id="cfgPlain">Toggle high-contrast (daylight) mode</button>
+      </div>
+      <p class="note">Drops the scanlines and glow. Useful outdoors.</p>
+    </div>
+    <div class="panel" id="queuePanel">
+      <p class="label">Pending queue</p>
+      <p id="queueText" style="margin:0;font-size:14px">Empty.</p>
+      <div class="actions"><button class="btn btn-wide" id="queueFlush">Push queued changes</button></div>
+    </div>
+  </section>
+
+</div>
+
+<div id="voicelog"></div>
+<button id="mic" title="Push to talk">🎙</button>
+<div id="toast"></div>
+
+<script>
+'use strict';
+
+/* ==================================================================== */
+/*  STATE                                                               */
+/* ==================================================================== */
+
+var CFG_KEY = 'geoffos.cfg';
+var QUEUE_KEY = 'geoffos.queue';
+var CACHE_KEY = 'geoffos.cache';
+
+var state = {
+  cfg: load(CFG_KEY, { url: '', token: '' }),
+  queue: load(QUEUE_KEY, []),
+  cache: load(CACHE_KEY, { enquiries: null, inbox: null, at: null }),
+  view: 'home',
+  filter: 'Needs Geoff Review',
+  busy: false
+};
+
+function load(k, dflt) {
+  try { var v = localStorage.getItem(k); return v ? JSON.parse(v) : dflt; }
+  catch (e) { return dflt; }
+}
+function save(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
+
+var $ = function (s) { return document.querySelector(s); };
+var $$ = function (s) { return Array.prototype.slice.call(document.querySelectorAll(s)); };
+
+/* ==================================================================== */
+/*  TRANSPORT                                                           */
+/* ==================================================================== */
+
+/*
+ * Content-Type is text/plain on purpose. Apps Script web apps do not answer
+ * CORS preflight requests, so anything that triggers one (like application/json)
+ * fails from a browser. text/plain keeps it a "simple request". The script
+ * parses the body as JSON regardless.
+ */
+function api(action, payload) {
+  if (!state.cfg.url || !state.cfg.token) {
+    return Promise.reject(new Error('No backend configured — open CFG'));
+  }
+  return fetch(state.cfg.url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify({ token: state.cfg.token, action: action, payload: payload || {} }),
+    redirect: 'follow'
+  }).then(function (r) {
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json();
+  }).then(function (j) {
+    if (!j.ok) throw new Error(j.error || 'Backend refused');
+    return j.data;
+  });
+}
+
+/* ==================================================================== */
+/*  OFFLINE QUEUE                                                       */
+/* ==================================================================== */
+
+function enqueue(action, payload) {
+  state.queue.push({ action: action, payload: payload, at: Date.now() });
+  save(QUEUE_KEY, state.queue);
+  renderQueue();
+}
+
+function flushQueue() {
+  if (!state.queue.length) { toast('Queue empty'); return Promise.resolve(); }
+  if (!navigator.onLine) { toast('Still offline', 'bad'); return Promise.resolve(); }
+  var ops = state.queue.slice();
+  return api('batch', { ops: ops }).then(function (results) {
+    var failed = [];
+    results.forEach(function (r, i) { if (!r.ok) failed.push(ops[i]); });
+    state.queue = failed;
+    save(QUEUE_KEY, state.queue);
+    renderQueue();
+    toast(failed.length ? (failed.length + ' failed to push') : 'Queue pushed',
+          failed.length ? 'bad' : 'good');
+    return sync();
+  }).catch(function (e) { toast(e.message, 'bad'); });
+}
+
+function renderQueue() {
+  var n = state.queue.length;
+  var el = $('#queueText');
+  if (el) el.textContent = n ? (n + ' change' + (n > 1 ? 's' : '') + ' waiting to push.') : 'Empty.';
+  netdot();
+}
+
+/* ==================================================================== */
+/*  SYNC                                                                */
+/* ==================================================================== */
+
+function sync() {
+  if (state.busy) return Promise.resolve();
+  state.busy = true;
+  netdot('warn');
+  return api('bootstrap').then(function (d) {
+    state.cache = { enquiries: d.enquiries, inbox: d.inbox, at: Date.now() };
+    save(CACHE_KEY, state.cache);
+    render();
+    netdot('ok');
+    return d;
+  }).catch(function (e) {
+    netdot('bad');
+    setStatus('Link down: ' + e.message + (state.cache.at ? ' — showing cached data.' : ''));
+    toast(e.message, 'bad');
+  }).then(function (r) { state.busy = false; return r; });
+}
+
+function netdot(force) {
+  var d = $('#netdot');
+  d.className = 'dot' + (force ? ' ' + force : (navigator.onLine ? ' ok' : ' bad'));
+  if (state.queue.length && !force) d.className = 'dot warn';
+}
+
+/* ==================================================================== */
+/*  RENDER                                                              */
+/* ==================================================================== */
+
+var STATUSES = ['New', 'Needs Geoff Review', 'Waiting for Client',
+                'Follow-Up Required', 'Closed', 'Not a Client Enquiry'];
+
+function enquiries() {
+  return (state.cache.enquiries && state.cache.enquiries.rows) || [];
+}
+
+/* Approved but not yet actually sent by the Chrome-driven sender. */
+function isReady(r) {
+  return String(r.approved_reply || '').trim() !== '' && String(r.sent || '').trim() === '';
+}
+function readyToSend() { return enquiries().filter(isReady); }
+
+function esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function render() {
+  renderHome();
+  renderTriage();
+  renderInbox();
+  renderQueue();
+}
+
+function setStatus(t) { $('#statusText').textContent = t; }
+
+function renderHome() {
+  var rows = enquiries();
+  var pending = rows.filter(function (r) {
+    return r.status === 'Needs Geoff Review' || r.status === 'New';
+  }).length;
+  var high = rows.filter(function (r) {
+    return r.priority === 'High' && r.status !== 'Closed';
+  }).length;
+
+  setCount('#tCountTriage', pending);
+  $('#tSubTriage').textContent = high ? (high + ' high priority open') : 'enquiries awaiting you';
+
+  var mail = (state.cache.inbox && state.cache.inbox.items) || [];
+  setCount('#tCountInbox', mail.length);
+
+  if (!state.cfg.url) {
+    setStatus('No backend linked. Open CFG and paste your Apps Script URL and token.');
+    $('#statusPanel').className = 'panel hotbar';
+  } else if (!state.cache.at) {
+    setStatus('Linked but no data yet. Hit SYNC.');
+    $('#statusPanel').className = 'panel warnbar';
+  } else {
+    var mins = Math.round((Date.now() - state.cache.at) / 60000);
+    setStatus(pending
+      ? (pending + ' enquir' + (pending === 1 ? 'y' : 'ies') + ' need a decision.'
+         + (high ? ' ' + high + ' high priority.' : ''))
+      : 'Triage clear. Nothing waiting on you.');
+    $('#statusPanel').className = 'panel' + (high ? ' warnbar' : '');
+    $('#clock').textContent = mins < 1 ? 'SYNCED JUST NOW' : ('SYNCED ' + mins + 'M AGO');
+  }
+}
+
+function setCount(sel, n) {
+  var el = $(sel);
+  el.textContent = n;
+  el.className = 'big' + (n ? '' : ' zero');
+}
+
+function renderTriage() {
+  var wrap = $('#triageFilters');
+  var counts = {};
+  enquiries().forEach(function (r) { counts[r.status] = (counts[r.status] || 0) + 1; });
+
+  var opts = ['All', 'Ready to send'].concat(STATUSES);
+  wrap.innerHTML = opts.map(function (s) {
+    var n = s === 'All' ? enquiries().length
+          : s === 'Ready to send' ? readyToSend().length
+          : (counts[s] || 0);
+    return '<button class="chip' + (state.filter === s ? ' on' : '') + '" data-filter="' + esc(s) + '">'
+      + esc(s) + ' ' + n + '</button>';
+  }).join('');
+
+  var rows = enquiries().filter(function (r) {
+    if (state.filter === 'All') return true;
+    if (state.filter === 'Ready to send') return isReady(r);
+    return r.status === state.filter;
+  });
+
+  // High priority first, then most recently active
+  var rank = { High: 0, Medium: 1, Low: 2 };
+  rows.sort(function (a, b) {
+    var d = (rank[a.priority] == null ? 3 : rank[a.priority])
+          - (rank[b.priority] == null ? 3 : rank[b.priority]);
+    if (d) return d;
+    return String(b.last_message_date || '').localeCompare(String(a.last_message_date || ''));
+  });
+
+  $('#triageList').innerHTML = rows.length
+    ? rows.map(card).join('')
+    : '<div class="empty">Nothing in this bucket</div>';
+}
+
+/* First name only — "Kathryn's last message" reads better than "Kathryn O's". */
+function firstName(r) {
+  var n = String(r.display_name || '').trim();
+  if (n) return n.split(/\s+/)[0];
+  return r.instagram_user ? '@' + r.instagram_user : 'They';
+}
+function possessive(n) {
+  return n + (/s$/i.test(n) ? "'" : "'s");
+}
+
+/*
+ * Three beats, in this order: what they said, what to send, want to change it.
+ * Everything else — enquiry summary, earlier context, the decision prompt,
+ * status — is real but secondary, so it sits behind one tap. On a phone,
+ * mid-day, the question is only ever "is this reply good enough to send".
+ */
+function card(r) {
+  var pri = String(r.priority || '').toLowerCase();
+  var draft = r.draft_reply || '';
+  var ctx = r.earlier_context || '';
+  var decision = r.decision_needed_from_geoff || '';
+  var summary = r.enquiry_summary || '';
+  var barClass = pri === 'high' ? ' hotbar' : (pri === 'medium' ? ' warnbar' : '');
+  var who = firstName(r);
+
+  var extras = ''
+    + (summary ? '<div class="field"><p class="label">Enquiry</p><p>' + esc(summary) + '</p></div>' : '')
+    + (decision ? '<div class="field"><p class="label">Decision needed</p>'
+        + '<p class="decision">' + esc(decision) + '</p></div>' : '')
+    + (ctx ? '<div class="field"><p class="label">Earlier context</p>'
+        + '<p style="color:var(--muted);font-size:13px">' + esc(ctx) + '</p></div>' : '')
+    + '<div class="field"><p class="label">Status</p><select data-f="status">'
+    +   STATUSES.map(function (s) {
+          return '<option' + (r.status === s ? ' selected' : '') + '>' + esc(s) + '</option>';
+        }).join('')
+    + '</select></div>'
+    + '<div class="actions"><button class="btn btn-wide" data-act="save">Save without approving</button></div>';
+
+  return ''
+  + '<div class="panel card' + barClass + '" data-row="' + r._row + '">'
+
+  //  ---- who
+  +   '<div class="who"><strong>' + esc(r.display_name || r.instagram_user || 'Unknown') + '</strong>'
+  +     '<span>@' + esc(r.instagram_user || '') + '</span></div>'
+  +   '<div class="meta">'
+  +     (r.priority ? '<span class="tag t-' + esc(pri) + '">' + esc(r.priority) + '</span>' : '')
+  +     (r.enquiry_type ? '<span class="tag t-type">' + esc(r.enquiry_type) + '</span>' : '')
+  +     (r.last_message_date ? '<span class="tag t-low">' + esc(r.last_message_date) + '</span>' : '')
+  +     (isReady(r) ? '<span class="tag" style="color:var(--green)">Awaiting send</span>' : '')
+  +     (String(r.sent || '').trim() ? '<span class="tag t-low">Sent ' + esc(r.sent) + '</span>' : '')
+  +   '</div>'
+
+  //  ---- beat 1: what they said
+  +   '<div class="field"><p class="label">' + esc(possessive(who)) + ' last message</p>'
+  +     '<p class="quote">' + esc(r.last_message || '(no message recorded)') + '</p></div>'
+
+  //  ---- beat 2: what to send
+  +   '<div class="field"><p class="label">Suggested reply</p>'
+  +     (draft
+        ? '<textarea data-f="draft">' + esc(draft) + '</textarea>'
+        : '<textarea data-f="draft" placeholder="No draft yet — write one, or ask for a redraft below"></textarea>')
+  +   '</div>'
+
+  //  ---- beat 3: change it?
+  +   '<div class="actions">'
+  //  "Approve to send", not "Send" — nothing leaves this app. Overstating it
+  //  here is how you end up thinking a client was answered when they weren't.
+  +     '<button class="btn btn-approve" data-act="approve">Approve to send</button>'
+  +     '<button class="btn btn-redraft" data-act="toggle-change">Make a change?</button>'
+  +   '</div>'
+
+  +   '<div class="changebox hide">'
+  +     '<div class="field"><p class="label">What should change?</p>'
+  +       '<textarea data-f="instr" placeholder="e.g. warmer, offer Thursday or Saturday, quote $450"'
+  +       '>' + esc(r.geoffs_instructions || '') + '</textarea></div>'
+  +     '<div class="actions"><button class="btn btn-redraft btn-wide" data-act="redraft">'
+  +       'Request redraft</button></div>'
+  +   '</div>'
+
+  //  ---- everything else
+  +   '<details><summary>Full context and status</summary><div class="body">'
+  +     extras
+  +   '</div></details>'
+
+  + '</div>';
+}
+
+function renderInbox() {
+  var box = state.cache.inbox;
+  var el = $('#inboxList');
+  if (!box) { el.innerHTML = '<div class="empty">No data yet — hit sync</div>'; return; }
+  if (box.available === false) {
+    el.innerHTML = '<div class="empty">Gmail unavailable<br>' + esc(box.error || '') + '</div>';
+    return;
+  }
+  if (!box.items.length) { el.innerHTML = '<div class="empty">Inbox clear</div>'; return; }
+
+  el.innerHTML = box.items.map(function (m) {
+    return '<div class="mail">'
+      + '<div class="from">' + esc(m.from) + '</div>'
+      + '<div class="subj">' + esc(m.subject) + '</div>'
+      + '<div class="snip">' + esc(m.snippet) + '</div>'
+      + '</div>';
+  }).join('');
+}
+
+/* ==================================================================== */
+/*  ACTIONS                                                             */
+/* ==================================================================== */
+
+/* Writes are addressed by stable _id, never by row number — see ensureIds_ in
+   the backend for why. _row rides along only as a fallback for legacy rows. */
+function commit(rowNum, fields, msg) {
+  var row = enquiries().filter(function (r) { return r._row === rowNum; })[0];
+  var payload = { _id: (row && row._id) || '', _row: rowNum, fields: fields };
+
+  if (row) { Object.keys(fields).forEach(function (k) { row[k] = fields[k]; }); }
+  save(CACHE_KEY, state.cache);
+  render();
+
+  if (!navigator.onLine) {
+    enqueue('updateEnquiry', payload);
+    toast('Queued — offline');
+    return;
+  }
+  api('updateEnquiry', payload)
+    .then(function (res) {
+      if (res.ignored && res.ignored.length) {
+        toast('Unknown columns: ' + res.ignored.join(', '), 'bad');
+      } else {
+        toast(msg || 'Saved', 'good');
+      }
+    })
+    .catch(function (e) {
+      enqueue('updateEnquiry', payload);
+      toast('Push failed — queued', 'bad');
+    });
+}
+
+function onCardClick(e) {
+  var btn = e.target.closest('[data-act]');
+  if (!btn) return;
+  var card = btn.closest('.card');
+  var act = btn.dataset.act;
+
+  if (act === 'toggle-change') {
+    var box = card.querySelector('.changebox');
+    var opening = box.classList.contains('hide');
+    box.classList.toggle('hide');
+    btn.textContent = opening ? 'Never mind' : 'Make a change?';
+    if (opening) card.querySelector('[data-f=instr]').focus();
+    return;
+  }
+
+  var rowNum = Number(card.dataset.row);
+  var draft = card.querySelector('[data-f=draft]').value.trim();
+  var instr = card.querySelector('[data-f=instr]').value.trim();
+  var status = card.querySelector('[data-f=status]').value;
+
+  if (act === 'approve') {
+    if (!draft) { toast('Nothing to approve', 'bad'); return; }
+    /*
+     * Deliberately does NOT touch Status. Sending happens in a separate Claude
+     * session driving Instagram through Chrome — this app can't send. Marking
+     * "Waiting for Client" here would claim a message went out that hasn't.
+     * The sender owns Status and the Sent date. This owns Approved Reply.
+     */
+    commit(rowNum, {
+      draft_reply: draft,
+      approved_reply: draft,
+      geoffs_instructions: instr,
+      status: status
+    }, 'Approved — queued for send');
+    return;
+  }
+
+  if (act === 'redraft') {
+    if (!instr) { toast('Write an instruction first', 'bad'); return; }
+    commit(rowNum, {
+      geoffs_instructions: instr,
+      draft_reply: draft,
+      status: 'Needs Geoff Review'
+    }, 'Redraft requested');
+    return;
+  }
+
+  if (act === 'save') {
+    commit(rowNum, { draft_reply: draft, geoffs_instructions: instr, status: status }, 'Saved');
+  }
+}
+
+/* ==================================================================== */
+/*  VOICE — push to talk                                                */
+/* ==================================================================== */
+
+var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+var recog = null, listening = false;
+
+function vlog(html) {
+  var el = $('#voicelog');
+  el.innerHTML = html;
+  el.classList.add('show');
+  clearTimeout(vlog._t);
+  vlog._t = setTimeout(function () { el.classList.remove('show'); }, 7000);
+}
+
+function speak(text) {
+  vlog('<b>OS</b> ' + esc(text));
+  if (!window.speechSynthesis) return;
+  try {
+    speechSynthesis.cancel();
+    var u = new SpeechSynthesisUtterance(text);
+    u.rate = 1.05; u.pitch = 1.0;
+    speechSynthesis.speak(u);
+  } catch (e) {}
+}
+
+function startVoice() {
+  if (!SR) { toast('Voice not supported in this browser', 'bad'); return; }
+  if (listening) { recog && recog.stop(); return; }
+
+  recog = new SR();
+  recog.lang = 'en-NZ';
+  recog.interimResults = true;
+  recog.continuous = false;
+
+  recog.onstart = function () {
+    listening = true;
+    $('#mic').classList.add('live');
+    vlog('<b>LISTENING</b>');
+  };
+  recog.onresult = function (ev) {
+    var txt = '';
+    for (var i = ev.resultIndex; i < ev.results.length; i++) txt += ev.results[i][0].transcript;
+    vlog('<b>YOU</b> ' + esc(txt));
+    if (ev.results[ev.results.length - 1].isFinal) handleCommand(txt.trim());
+  };
+  recog.onerror = function (ev) {
+    vlog('<b>ERR</b> ' + esc(ev.error));
+    if (ev.error === 'not-allowed') toast('Mic permission denied', 'bad');
+  };
+  recog.onend = function () { listening = false; $('#mic').classList.remove('live'); };
+
+  try { recog.start(); } catch (e) { toast('Mic busy', 'bad'); }
+}
+
+/*
+ * Local command matching. Deliberately small and predictable — it does not
+ * guess. Anything it does not recognise, it says so rather than doing something
+ * unexpected to your data. Conversational replies come later, once the backend
+ * can proxy to a model.
+ */
+function handleCommand(t) {
+  var s = t.toLowerCase();
+  var rows = enquiries();
+
+  if (/\b(sync|refresh|update)\b/.test(s)) {
+    speak('Syncing.');
+    sync().then(function () { speak(brief()); });
+    return;
+  }
+  if (/\b(brief|status|report|what.*(waiting|need|on)|sitrep)\b/.test(s)) {
+    if (!state.cache.at) { speak('No data yet. Say sync.'); return; }
+    speak(brief());
+    return;
+  }
+  if (/\b(triage|enquir|enquiries|clients?)\b/.test(s)) { go('triage'); speak('Triage.'); return; }
+  if (/\b(inbox|email|mail)\b/.test(s)) {
+    go('inbox');
+    var n = (state.cache.inbox && state.cache.inbox.items || []).length;
+    speak(n ? (n + ' unread threads.') : 'Inbox clear.');
+    return;
+  }
+  if (/\b(home|dashboard|back|main)\b/.test(s)) { go('home'); speak('Home.'); return; }
+  if (/\b(high|urgent|priority)\b/.test(s)) {
+    var hi = rows.filter(function (r) { return r.priority === 'High' && r.status !== 'Closed'; });
+    go('triage'); state.filter = 'All'; renderTriage();
+    speak(hi.length
+      ? (hi.length + ' high priority: ' + hi.map(function (r) {
+          return r.display_name || r.instagram_user; }).join(', '))
+      : 'Nothing high priority.');
+    return;
+  }
+  speak('Not sure what you meant. Try: brief, triage, inbox, sync, or high priority.');
+}
+
+function brief() {
+  var rows = enquiries();
+  var pending = rows.filter(function (r) {
+    return r.status === 'Needs Geoff Review' || r.status === 'New'; }).length;
+  var high = rows.filter(function (r) {
+    return r.priority === 'High' && r.status !== 'Closed'; }).length;
+  var mail = (state.cache.inbox && state.cache.inbox.items || []).length;
+  if (!pending && !mail) return 'All clear. Nothing waiting on you.';
+  var bits = [];
+  if (pending) bits.push(pending + ' enquir' + (pending === 1 ? 'y' : 'ies') + ' to review'
+    + (high ? ', ' + high + ' high priority' : ''));
+  var ready = readyToSend().length;
+  if (ready) bits.push(ready + ' approved and waiting to send');
+  if (mail) bits.push(mail + ' unread email' + (mail === 1 ? '' : 's'));
+  return bits.join('. ') + '.';
+}
+
+/* ==================================================================== */
+/*  NAV + WIRING                                                        */
+/* ==================================================================== */
+
+function go(view) {
+  state.view = view;
+  ['home', 'triage', 'inbox', 'cfg'].forEach(function (v) {
+    $('#view-' + v).classList.toggle('hide', v !== view);
+  });
+  $('#btnBack').style.display = view === 'home' ? 'none' : '';
+  window.scrollTo(0, 0);
+}
+
+function toast(msg, kind) {
+  var d = document.createElement('div');
+  d.className = 'toast' + (kind ? ' ' + kind : '');
+  d.textContent = msg;
+  $('#toast').appendChild(d);
+  setTimeout(function () { d.remove(); }, 3200);
+}
+
+document.addEventListener('click', function (e) {
+  var t = e.target.closest('[data-go]');
+  if (t && !t.disabled) { go(t.dataset.go); return; }
+  var f = e.target.closest('[data-filter]');
+  if (f) { state.filter = f.dataset.filter; renderTriage(); return; }
+});
+
+$('#triageList').addEventListener('click', onCardClick);
+$('#btnBack').addEventListener('click', function () { go('home'); });
+$('#btnSync').addEventListener('click', function () { sync().then(function(){ toast('Synced','good'); }); });
+$('#btnCfg').addEventListener('click', function () { go(state.view === 'cfg' ? 'home' : 'cfg'); });
+$('#mic').addEventListener('click', startVoice);
+$('#queueFlush').addEventListener('click', flushQueue);
+
+$('#cfgSave').addEventListener('click', function () {
+  state.cfg = { url: $('#cfgUrl').value.trim(), token: $('#cfgToken').value.trim() };
+  save(CFG_KEY, state.cfg);
+  toast('Testing link…');
+  api('ping').then(function (d) {
+    toast('Linked as ' + (d.user || 'you'), 'good');
+    return sync();
+  }).then(function () { go('home'); })
+    .catch(function (e) { toast(e.message, 'bad'); });
+});
+
+$('#cfgClear').addEventListener('click', function () {
+  state.cfg = { url: '', token: '' };
+  save(CFG_KEY, state.cfg);
+  $('#cfgUrl').value = ''; $('#cfgToken').value = '';
+  toast('Cleared');
+});
+
+$('#cfgPlain').addEventListener('click', function () {
+  document.body.classList.toggle('plain');
+  save('geoffos.plain', document.body.classList.contains('plain'));
+});
+
+window.addEventListener('online', function () { netdot(); flushQueue(); });
+window.addEventListener('offline', function () { netdot(); });
+
+/* ==================================================================== */
+/*  BOOT                                                                */
+/* ==================================================================== */
+
+if (load('geoffos.plain', false)) document.body.classList.add('plain');
+$('#cfgUrl').value = state.cfg.url;
+$('#cfgToken').value = state.cfg.token;
+
+render();
+netdot();
+
+if (state.cfg.url && state.cfg.token) {
+  sync().then(function () { if (state.queue.length) flushQueue(); });
+} else {
+  go('cfg');
+}
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js').catch(function () {});
+}
+</script>
+</body>
+</html>
