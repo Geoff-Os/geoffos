@@ -428,6 +428,12 @@ body.plain textarea,body.plain select,body.plain input{background:#04101a;box-sh
 }
 
 /* ------------------------------------------------------- theme swatches */
+/* ------------------------------------------------------- source rows */
+.srcrow{display:flex;align-items:center;gap:11px;padding:11px 0;
+  border-bottom:1px solid rgba(var(--tint),.14)}
+.srcrow:last-child{border-bottom:none}
+.dotc{width:9px;height:9px;border-radius:50%;flex:none}
+
 .themes{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin:4px 0 14px}
 .sw{
   position:relative;overflow:hidden;cursor:pointer;padding:0;
@@ -473,15 +479,16 @@ a{color:var(--cyan)}
       <p id="statusText" style="margin:0;font-size:14px">Standing by.</p>
     </div>
 
+    <h2 class="sec">Inboxes</h2>
+    <div class="tiles" id="inboxTiles"></div>
+
     <h2 class="sec">Modules</h2>
     <div class="tiles">
       <button class="tile" data-go="triage">
         <div><div class="big zero" id="tCountTriage">–</div></div>
-        <div><div class="name">Triage</div><div class="sub" id="tSubTriage">enquiries awaiting you</div></div>
-      </button>
-      <button class="tile" data-go="inbox">
-        <div><div class="big zero" id="tCountInbox">–</div></div>
-        <div><div class="name">Inbox</div><div class="sub" id="tSubInbox">unread, last 7 days</div></div>
+        <div><div class="name">Instagram</div>
+             <div class="sub" style="color:var(--cyan-dim)">geofftattooartist</div>
+             <div class="sub" id="tSubTriage">enquiries awaiting you</div></div>
       </button>
       <button class="tile" disabled>
         <div><div class="big zero">—</div></div>
@@ -505,14 +512,15 @@ a{color:var(--cyan)}
 
   <!-- =================================================== TRIAGE ======= -->
   <section id="view-triage" class="hide">
+    <h2 class="sec">Instagram — geofftattooartist</h2>
     <div class="chips" id="triageFilters"></div>
     <div id="triageList"></div>
   </section>
 
   <!-- ==================================================== INBOX ======= -->
   <section id="view-inbox" class="hide">
+    <h2 class="sec" id="inboxTitle">Inbox</h2>
     <div class="panel">
-      <p class="label">Inbox digest</p>
       <div id="inboxList"><div class="empty">No data yet — hit sync</div></div>
     </div>
     <p class="note">Read-only for now. Snippets only, so the payload stays small on mobile data.</p>
@@ -521,7 +529,24 @@ a{color:var(--cyan)}
   <!-- ===================================================== CFG ======== -->
   <section id="view-cfg" class="hide">
     <div class="panel">
-      <p class="label">Backend link</p>
+      <p class="label">Connected accounts</p>
+      <div id="sourceList"></div>
+      <p class="note" id="sourceNote"></p>
+    </div>
+
+    <div class="panel">
+      <p class="label">Add an account</p>
+      <div class="field">
+        <p class="label">Name it</p>
+        <input type="text" id="cfgLabel" placeholder="e.g. Webbridge, Personal, Tattoo" autocomplete="off">
+      </div>
+      <div class="field">
+        <p class="label">What it provides</p>
+        <select id="cfgRole">
+          <option value="inbox">Inbox only</option>
+          <option value="primary">Inbox + the enquiry sheet</option>
+        </select>
+      </div>
       <div class="field">
         <p class="label">Apps Script web app URL</p>
         <input type="url" id="cfgUrl" placeholder="https://script.google.com/macros/s/.../exec" autocomplete="off">
@@ -531,10 +556,10 @@ a{color:var(--cyan)}
         <input type="text" id="cfgToken" placeholder="paste the token from setup_generateToken" autocomplete="off">
       </div>
       <div class="actions">
-        <button class="btn btn-approve" id="cfgSave">Save + test</button>
-        <button class="btn btn-redraft" id="cfgClear">Clear</button>
+        <button class="btn btn-approve" id="cfgSave">Test + add</button>
+        <button class="btn btn-redraft" id="cfgReset">Clear form</button>
       </div>
-      <p class="note">Stored only on this device. Anyone holding both the URL and the token can read this sheet and an inbox digest — treat them like a password.</p>
+      <p class="note">Each Google account needs its own Apps Script deployment — a script can only ever read the inbox of the account it runs as. Only one account should be marked "Inbox + the enquiry sheet". Stored on this device only; treat each URL and token pair like a password.</p>
     </div>
     <div class="panel">
       <p class="label">Theme</p>
@@ -564,18 +589,54 @@ a{color:var(--cyan)}
 /*  STATE                                                               */
 /* ==================================================================== */
 
-var CFG_KEY = 'geoffos.cfg';
+var CFG_KEY = 'geoffos.cfg';          /* legacy single-backend config */
+var SRC_KEY = 'geoffos.sources';
 var QUEUE_KEY = 'geoffos.queue';
 var CACHE_KEY = 'geoffos.cache';
 
+/* Distinct colours so each account is identifiable at a glance. */
+var SRC_COLOURS = ['#6fe3ff', '#ffb648', '#7cffb2', '#c9a4ff', '#ff8f6b', '#5fe3c4'];
+
 var state = {
-  cfg: load(CFG_KEY, { url: '', token: '' }),
+  sources: [],
   queue: load(QUEUE_KEY, []),
-  cache: load(CACHE_KEY, { enquiries: null, inbox: null, at: null }),
+  cache: load(CACHE_KEY, { enquiries: null, inboxes: {}, at: null }),
   view: 'home',
+  activeInbox: null,
   filter: 'Needs Geoff Review',
   busy: false
 };
+
+/*
+ * A "source" is one Google account with its own Apps Script deployment.
+ * A script can only read the mailbox of the account it runs as, which is why
+ * four inboxes means four deployments rather than one clever query.
+ *   role 'primary' — also serves the enquiry sheet. Exactly one of these.
+ *   role 'inbox'   — mail digest only.
+ */
+function loadSources() {
+  var list = load(SRC_KEY, null);
+  if (!list) {
+    // Migrate anyone already set up with the old single-backend config
+    var old = load(CFG_KEY, null);
+    list = (old && old.url)
+      ? [{ id: 'primary', label: 'Main', role: 'primary', url: old.url, token: old.token }]
+      : [];
+    save(SRC_KEY, list);
+  }
+  state.sources = list;
+  return list;
+}
+function saveSources() { save(SRC_KEY, state.sources); }
+function primarySource() {
+  return state.sources.filter(function (s) { return s.role === 'primary'; })[0] || null;
+}
+function sourceColour(s) {
+  return SRC_COLOURS[state.sources.indexOf(s) % SRC_COLOURS.length];
+}
+function sourceById(id) {
+  return state.sources.filter(function (s) { return s.id === id; })[0] || null;
+}
 
 function load(k, dflt) {
   try { var v = localStorage.getItem(k); return v ? JSON.parse(v) : dflt; }
@@ -596,14 +657,14 @@ var $$ = function (s) { return Array.prototype.slice.call(document.querySelector
  * fails from a browser. text/plain keeps it a "simple request". The script
  * parses the body as JSON regardless.
  */
-function api(action, payload) {
-  if (!state.cfg.url || !state.cfg.token) {
+function api(src, action, payload) {
+  if (!src || !src.url || !src.token) {
     return Promise.reject(new Error('No backend configured — open CFG'));
   }
-  return fetch(state.cfg.url, {
+  return fetch(src.url, {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    body: JSON.stringify({ token: state.cfg.token, action: action, payload: payload || {} }),
+    body: JSON.stringify({ token: src.token, action: action, payload: payload || {} }),
     redirect: 'follow'
   }).then(function (r) {
     if (!r.ok) throw new Error('HTTP ' + r.status);
@@ -628,7 +689,7 @@ function flushQueue() {
   if (!state.queue.length) { toast('Queue empty'); return Promise.resolve(); }
   if (!navigator.onLine) { toast('Still offline', 'bad'); return Promise.resolve(); }
   var ops = state.queue.slice();
-  return api('batch', { ops: ops }).then(function (results) {
+  return api(primarySource(), 'batch', { ops: ops }).then(function (results) {
     var failed = [];
     results.forEach(function (r, i) { if (!r.ok) failed.push(ops[i]); });
     state.queue = failed;
@@ -651,21 +712,48 @@ function renderQueue() {
 /*  SYNC                                                                */
 /* ==================================================================== */
 
+/*
+ * Fans out across every connected account in parallel. Deliberately uses
+ * per-source catch rather than Promise.all's fail-fast: one account with an
+ * expired deployment shouldn't blank the other three.
+ */
 function sync() {
   if (state.busy) return Promise.resolve();
+  if (!state.sources.length) { render(); return Promise.resolve(); }
+
   state.busy = true;
   netdot('warn');
-  return api('bootstrap').then(function (d) {
-    state.cache = { enquiries: d.enquiries, inbox: d.inbox, at: Date.now() };
+  var failures = [];
+
+  var jobs = state.sources.map(function (src) {
+    var isPrimary = src.role === 'primary';
+    return api(src, isPrimary ? 'bootstrap' : 'inbox', isPrimary ? {} : { max: 15 })
+      .then(function (d) {
+        if (isPrimary) {
+          state.cache.enquiries = d.enquiries;
+          state.cache.inboxes[src.id] = d.inbox;
+        } else {
+          state.cache.inboxes[src.id] = d;
+        }
+      })
+      .catch(function (e) {
+        failures.push(src.label + ': ' + e.message);
+        state.cache.inboxes[src.id] = { available: false, error: e.message, items: [] };
+      });
+  });
+
+  return Promise.all(jobs).then(function () {
+    state.cache.at = Date.now();
     save(CACHE_KEY, state.cache);
     render();
-    netdot('ok');
-    return d;
-  }).catch(function (e) {
-    netdot('bad');
-    setStatus('Link down: ' + e.message + (state.cache.at ? ' — showing cached data.' : ''));
-    toast(e.message, 'bad');
-  }).then(function (r) { state.busy = false; return r; });
+    netdot(failures.length ? 'warn' : 'ok');
+    if (failures.length) {
+      setStatus('Problem with ' + failures.length + ' account' + (failures.length > 1 ? 's' : '')
+        + ': ' + failures.join(' · '));
+      toast(failures.length + ' account(s) failed', 'bad');
+    }
+    state.busy = false;
+  });
 }
 
 function netdot(force) {
@@ -699,9 +787,72 @@ function esc(s) {
 
 function render() {
   renderHome();
+  renderInboxTiles();
   renderTriage();
   renderInbox();
+  renderSources();
   renderQueue();
+}
+
+function inboxItems(id) {
+  var box = state.cache.inboxes && state.cache.inboxes[id];
+  return (box && box.items) || [];
+}
+function totalUnread() {
+  return state.sources.reduce(function (n, s) { return n + inboxItems(s.id).length; }, 0);
+}
+
+function renderInboxTiles() {
+  var wrap = $('#inboxTiles');
+  if (!state.sources.length) {
+    wrap.innerHTML = '<button class="tile" data-go="cfg" style="grid-column:1/-1">'
+      + '<div><div class="big zero">+</div></div>'
+      + '<div><div class="name">Connect an account</div>'
+      + '<div class="sub">no inboxes linked yet</div></div></button>';
+    return;
+  }
+  wrap.innerHTML = state.sources.map(function (s) {
+    var box = state.cache.inboxes && state.cache.inboxes[s.id];
+    var n = inboxItems(s.id).length;
+    var broken = box && box.available === false;
+    var c = sourceColour(s);
+    return '<button class="tile" data-inbox="' + esc(s.id) + '"'
+      + ' style="box-shadow:var(--lens),var(--lift),inset 3px 0 0 ' + c + '">'
+      + '<div><div class="big' + (n ? '' : ' zero') + '"'
+      + (n ? ' style="color:' + c + ';text-shadow:0 0 14px ' + c + '66"' : '') + '>'
+      + (broken ? '!' : n) + '</div></div>'
+      + '<div><div class="name">' + esc(s.label) + '</div>'
+      + '<div class="sub">' + (broken ? 'not responding' : 'unread, last 7 days') + '</div></div>'
+      + '</button>';
+  }).join('');
+}
+
+function renderSources() {
+  var el = $('#sourceList');
+  if (!el) return;
+  if (!state.sources.length) {
+    el.innerHTML = '<div class="empty">No accounts connected</div>';
+    $('#sourceNote').textContent = 'Add your first account below.';
+    return;
+  }
+  el.innerHTML = state.sources.map(function (s) {
+    var c = sourceColour(s);
+    return '<div class="srcrow">'
+      + '<span class="dotc" style="background:' + c + ';box-shadow:0 0 9px ' + c + '"></span>'
+      + '<div style="flex:1;min-width:0">'
+      +   '<div style="font-size:14px;color:#fff">' + esc(s.label) + '</div>'
+      +   '<div class="sub">' + (s.role === 'primary' ? 'inbox + enquiry sheet' : 'inbox only') + '</div>'
+      + '</div>'
+      + '<button class="hud-btn" data-remove="' + esc(s.id) + '">REMOVE</button>'
+      + '</div>';
+  }).join('');
+
+  var prim = state.sources.filter(function (s) { return s.role === 'primary'; }).length;
+  $('#sourceNote').textContent = prim === 0
+    ? 'Warning: no account is marked as holding the enquiry sheet, so Instagram triage will stay empty.'
+    : prim > 1
+      ? 'Warning: more than one account is marked as holding the enquiry sheet. Only the first is used.'
+      : 'Connected. Each account is read by its own Apps Script deployment.';
 }
 
 function setStatus(t) { $('#statusText').textContent = t; }
@@ -718,11 +869,10 @@ function renderHome() {
   setCount('#tCountTriage', pending);
   $('#tSubTriage').textContent = high ? (high + ' high priority open') : 'enquiries awaiting you';
 
-  var mail = (state.cache.inbox && state.cache.inbox.items) || [];
-  setCount('#tCountInbox', mail.length);
+  var mail = totalUnread();
 
-  if (!state.cfg.url) {
-    setStatus('No backend linked. Open CFG and paste your Apps Script URL and token.');
+  if (!state.sources.length) {
+    setStatus('No accounts linked. Open CFG and add your first Apps Script backend.');
     $('#statusPanel').className = 'panel hotbar';
   } else if (!state.cache.at) {
     setStatus('Linked but no data yet. Hit SYNC.');
@@ -731,8 +881,9 @@ function renderHome() {
     var mins = Math.round((Date.now() - state.cache.at) / 60000);
     setStatus(pending
       ? (pending + ' enquir' + (pending === 1 ? 'y' : 'ies') + ' need a decision.'
-         + (high ? ' ' + high + ' high priority.' : ''))
-      : 'Triage clear. Nothing waiting on you.');
+         + (high ? ' ' + high + ' high priority.' : '')
+         + (mail ? ' ' + mail + ' unread across ' + state.sources.length + ' inboxes.' : ''))
+      : (mail ? ('Triage clear. ' + mail + ' unread email.') : 'All clear. Nothing waiting on you.'));
     $('#statusPanel').className = 'panel' + (high ? ' warnbar' : '');
     $('#clock').textContent = mins < 1 ? 'SYNCED JUST NOW' : ('SYNCED ' + mins + 'M AGO');
   }
@@ -866,8 +1017,13 @@ function card(r) {
 }
 
 function renderInbox() {
-  var box = state.cache.inbox;
   var el = $('#inboxList');
+  var src = state.activeInbox ? sourceById(state.activeInbox) : primarySource();
+  if (!src) { el.innerHTML = '<div class="empty">No account selected</div>'; return; }
+
+  $('#inboxTitle').textContent = src.label;
+  var box = state.cache.inboxes && state.cache.inboxes[src.id];
+
   if (!box) { el.innerHTML = '<div class="empty">No data yet — hit sync</div>'; return; }
   if (box.available === false) {
     el.innerHTML = '<div class="empty">Gmail unavailable<br>' + esc(box.error || '') + '</div>';
@@ -903,7 +1059,7 @@ function commit(rowNum, fields, msg) {
     toast('Queued — offline');
     return;
   }
-  api('updateEnquiry', payload)
+  api(primarySource(), 'updateEnquiry', payload)
     .then(function (res) {
       if (res.ignored && res.ignored.length) {
         toast('Unknown columns: ' + res.ignored.join(', '), 'bad');
@@ -1044,11 +1200,27 @@ function handleCommand(t) {
     speak(brief());
     return;
   }
-  if (/\b(triage|enquir|enquiries|clients?)\b/.test(s)) { go('triage'); speak('Triage.'); return; }
+  if (/\b(triage|enquir|enquiries|clients?|instagram|insta|dms?)\b/.test(s)) {
+    go('triage'); speak('Instagram enquiries.'); return;
+  }
   if (/\b(inbox|email|mail)\b/.test(s)) {
-    go('inbox');
-    var n = (state.cache.inbox && state.cache.inbox.items || []).length;
-    speak(n ? (n + ' unread threads.') : 'Inbox clear.');
+    // "show me webbridge email" — match a source by name if one is mentioned
+    var named = state.sources.filter(function (src) {
+      return s.indexOf(src.label.toLowerCase().split(' ')[0]) !== -1;
+    })[0];
+    if (named) {
+      state.activeInbox = named.id; renderInbox(); go('inbox');
+      var c = inboxItems(named.id).length;
+      speak(named.label + ': ' + (c ? c + ' unread.' : 'clear.'));
+      return;
+    }
+    go('home');
+    var parts = state.sources.map(function (src) {
+      return src.label.split(' (')[0] + ' ' + inboxItems(src.id).length;
+    });
+    speak(totalUnread()
+      ? ('Unread: ' + parts.join(', ') + '.')
+      : 'All inboxes clear.');
     return;
   }
   if (/\b(home|dashboard|back|main)\b/.test(s)) { go('home'); speak('Home.'); return; }
@@ -1070,7 +1242,7 @@ function brief() {
     return r.status === 'Needs Geoff Review' || r.status === 'New'; }).length;
   var high = rows.filter(function (r) {
     return r.priority === 'High' && r.status !== 'Closed'; }).length;
-  var mail = (state.cache.inbox && state.cache.inbox.items || []).length;
+  var mail = totalUnread();
   if (!pending && !mail) return 'All clear. Nothing waiting on you.';
   var bits = [];
   if (pending) bits.push(pending + ' enquir' + (pending === 1 ? 'y' : 'ies') + ' to review'
@@ -1147,7 +1319,22 @@ document.addEventListener('click', function (e) {
   if (f) { state.filter = f.dataset.filter; renderTriage(); return; }
   var th = e.target.closest('.sw[data-theme]');
   if (th) { applyTheme(th.dataset.theme); return; }
+  var ib = e.target.closest('[data-inbox]');
+  if (ib) { state.activeInbox = ib.dataset.inbox; renderInbox(); go('inbox'); return; }
+  var rm = e.target.closest('[data-remove]');
+  if (rm) { removeSource(rm.dataset.remove); return; }
 });
+
+function removeSource(id) {
+  var s = sourceById(id);
+  if (!s) return;
+  state.sources = state.sources.filter(function (x) { return x.id !== id; });
+  delete state.cache.inboxes[id];
+  saveSources();
+  save(CACHE_KEY, state.cache);
+  render();
+  toast('Removed ' + s.label);
+}
 
 $('#triageList').addEventListener('click', onCardClick);
 $('#btnBack').addEventListener('click', function () { go('home'); });
@@ -1156,22 +1343,39 @@ $('#btnCfg').addEventListener('click', function () { go(state.view === 'cfg' ? '
 $('#mic').addEventListener('click', startVoice);
 $('#queueFlush').addEventListener('click', flushQueue);
 
+/* Tests the connection BEFORE saving it — a source that has never answered
+   shouldn't get to sit in the list looking legitimate. */
 $('#cfgSave').addEventListener('click', function () {
-  state.cfg = { url: $('#cfgUrl').value.trim(), token: $('#cfgToken').value.trim() };
-  save(CFG_KEY, state.cfg);
-  toast('Testing link…');
-  api('ping').then(function (d) {
-    toast('Linked as ' + (d.user || 'you'), 'good');
+  var candidate = {
+    id: 'src_' + Date.now().toString(36),
+    label: $('#cfgLabel').value.trim(),
+    role: $('#cfgRole').value,
+    url: $('#cfgUrl').value.trim(),
+    token: $('#cfgToken').value.trim()
+  };
+  if (!candidate.url || !candidate.token) { toast('URL and token both needed', 'bad'); return; }
+  if (!candidate.label) candidate.label = 'Account ' + (state.sources.length + 1);
+
+  if (candidate.role === 'primary' && primarySource()) {
+    toast('An enquiry-sheet account already exists', 'bad');
+    return;
+  }
+
+  toast('Testing…');
+  api(candidate, 'ping').then(function (d) {
+    if (d.user) candidate.label = candidate.label + ' (' + d.user + ')';
+    state.sources.push(candidate);
+    saveSources();
+    $('#cfgLabel').value = ''; $('#cfgUrl').value = ''; $('#cfgToken').value = '';
+    toast('Added ' + (d.user || candidate.label), 'good');
     return sync();
-  }).then(function () { go('home'); })
+  }).then(function () { render(); })
     .catch(function (e) { toast(e.message, 'bad'); });
 });
 
-$('#cfgClear').addEventListener('click', function () {
-  state.cfg = { url: '', token: '' };
-  save(CFG_KEY, state.cfg);
-  $('#cfgUrl').value = ''; $('#cfgToken').value = '';
-  toast('Cleared');
+$('#cfgReset').addEventListener('click', function () {
+  $('#cfgLabel').value = ''; $('#cfgUrl').value = ''; $('#cfgToken').value = '';
+  toast('Form cleared');
 });
 
 $('#cfgPlain').addEventListener('click', function () {
@@ -1188,13 +1392,13 @@ window.addEventListener('offline', function () { netdot(); });
 
 if (load('geoffos.plain', false)) document.body.classList.add('plain');
 applyTheme(load('geoffos.theme', 'halo'));
-$('#cfgUrl').value = state.cfg.url;
-$('#cfgToken').value = state.cfg.token;
+loadSources();
+if (!state.cache.inboxes) state.cache.inboxes = {};
 
 render();
 netdot();
 
-if (state.cfg.url && state.cfg.token) {
+if (state.sources.length) {
   sync().then(function () { if (state.queue.length) flushQueue(); });
 } else {
   go('cfg');
