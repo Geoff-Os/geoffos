@@ -2,7 +2,7 @@
  * Sheet data is never cached here; that lives in localStorage so it stays
  * consistent with the offline write queue. Bump VERSION to force an update. */
 
-var VERSION = 'geoffos-v2';
+var VERSION = 'geoffos-v3';
 var SHELL = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', function (e) {
