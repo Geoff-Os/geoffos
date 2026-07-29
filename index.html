@@ -212,10 +212,36 @@ header.hud{
   text-transform:uppercase;margin:0 0 5px}
 h2.sec{font-family:var(--mono);font-size:12px;letter-spacing:.2em;color:var(--cyan);
   text-transform:uppercase;margin:22px 0 10px;display:flex;align-items:center;gap:9px}
-h2.sec::after{content:"";flex:1;height:1px;background:var(--line)}
+h2.sec::after{content:"";flex:1;height:1px;background:var(--line);order:1}
+h2.sec .hud-btn{order:2}
 
 /* ------------------------------------------------------------ tile grid */
-.tiles{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+.tiles{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;grid-auto-flow:dense}
+
+/* ---- widget sizes. Two-column grid, so "wide" is full bleed. ---- */
+.tile[data-size="wide"]{grid-column:span 2}
+.tile[data-size="big"]{grid-column:span 2;min-height:172px}
+.tile[data-size="big"] .big{font-size:44px}
+.tile[data-size="wide"] .big{font-size:34px}
+
+/* ---- edit mode ---- */
+body.editing .tile{touch-action:none;cursor:grab}
+body.editing .tile:active{cursor:grabbing}
+@keyframes jiggle{0%,100%{transform:rotate(-.5deg)}50%{transform:rotate(.5deg)}}
+body.editing .tile:not(.dragging){animation:jiggle .9s ease-in-out infinite}
+body.editing .tile:nth-child(2n){animation-delay:.18s}
+.tile.dragging{opacity:.55;transform:scale(1.05);z-index:10;animation:none;
+  box-shadow:var(--lens),0 18px 42px rgba(0,0,0,.6),0 0 30px rgba(var(--tint),.4)}
+.tile.dropzone{outline:2px dashed var(--cyan);outline-offset:-4px}
+.sizebtn{
+  position:absolute;top:8px;right:8px;z-index:5;
+  width:30px;height:30px;border-radius:50%;display:none;
+  align-items:center;justify-content:center;
+  background:rgba(0,0,0,.55);border:1px solid var(--glass-edge);
+  color:var(--cyan);font-family:var(--mono);font-size:13px;cursor:pointer;
+}
+body.editing .sizebtn{display:flex}
+body.editing .tile[disabled]{opacity:.6;cursor:grab}
 .tile{
   position:relative;overflow:hidden;
   background:var(--glass);
@@ -479,35 +505,11 @@ a{color:var(--cyan)}
       <p id="statusText" style="margin:0;font-size:14px">Standing by.</p>
     </div>
 
-    <h2 class="sec">Inboxes</h2>
-    <div class="tiles" id="inboxTiles"></div>
-
-    <h2 class="sec">Modules</h2>
-    <div class="tiles">
-      <button class="tile" data-go="triage">
-        <div><div class="big zero" id="tCountTriage">–</div></div>
-        <div><div class="name">Instagram</div>
-             <div class="sub" style="color:var(--cyan-dim)">geofftattooartist</div>
-             <div class="sub" id="tSubTriage">enquiries awaiting you</div></div>
-      </button>
-      <button class="tile" disabled>
-        <div><div class="big zero">—</div></div>
-        <div><div class="name">Tasks</div><div class="sub">module offline</div></div>
-      </button>
-      <button class="tile" disabled>
-        <div><div class="big zero">—</div></div>
-        <div><div class="name">Bills</div><div class="sub">module offline</div></div>
-      </button>
-      <button class="tile" disabled>
-        <div><div class="big zero">—</div></div>
-        <div><div class="name">Habits</div><div class="sub">module offline</div></div>
-      </button>
-      <button class="tile" disabled>
-        <div><div class="big zero">—</div></div>
-        <div><div class="name">Shared</div><div class="sub">module offline</div></div>
-      </button>
-    </div>
-    <p class="note">Offline modules are placeholders. Each one gets built and switched on separately.</p>
+    <h2 class="sec">Dashboard
+      <button class="hud-btn" id="btnEdit" style="margin-left:auto">EDIT</button>
+    </h2>
+    <div class="tiles" id="grid"></div>
+    <p class="note" id="gridNote">Offline modules are placeholders. Each one gets built and switched on separately.</p>
   </section>
 
   <!-- =================================================== TRIAGE ======= -->
@@ -787,7 +789,7 @@ function esc(s) {
 
 function render() {
   renderHome();
-  renderInboxTiles();
+  renderGrid();
   renderTriage();
   renderInbox();
   renderSources();
@@ -802,29 +804,187 @@ function totalUnread() {
   return state.sources.reduce(function (n, s) { return n + inboxItems(s.id).length; }, 0);
 }
 
-function renderInboxTiles() {
-  var wrap = $('#inboxTiles');
+/* ==================================================================== */
+/*  WIDGET GRID                                                         */
+/* ==================================================================== */
+
+var SIZES = ['sm', 'wide', 'big'];
+var LAYOUT_KEY = 'geoffos.layout';
+
+/*
+ * Layout is a saved list of {key,size}. Widgets are derived fresh each render
+ * (inbox widgets come and go as accounts are added), then ordered to match the
+ * saved layout. Anything new is appended rather than dropped, and anything
+ * saved but no longer present is skipped — so removing an account doesn't
+ * corrupt the layout, and adding one doesn't require re-editing it.
+ */
+function loadLayout() { return load(LAYOUT_KEY, []); }
+function saveLayout(l) { save(LAYOUT_KEY, l); }
+
+function widgets() {
+  var list = [];
+
+  list.push({
+    key: 'instagram',
+    name: 'Instagram',
+    sub2: 'geofftattooartist',
+    go: 'triage',
+    value: function () {
+      return enquiries().filter(function (r) {
+        return r.status === 'Needs Geoff Review' || r.status === 'New'; }).length;
+    },
+    sub: function () {
+      var high = enquiries().filter(function (r) {
+        return r.priority === 'High' && r.status !== 'Closed'; }).length;
+      return high ? (high + ' high priority open') : 'enquiries awaiting you';
+    }
+  });
+
+  state.sources.forEach(function (s) {
+    list.push({
+      key: 'inbox:' + s.id,
+      name: s.label,
+      inbox: s.id,
+      colour: sourceColour(s),
+      value: function () {
+        var box = state.cache.inboxes && state.cache.inboxes[s.id];
+        return (box && box.available === false) ? '!' : inboxItems(s.id).length;
+      },
+      sub: function () {
+        var box = state.cache.inboxes && state.cache.inboxes[s.id];
+        return (box && box.available === false) ? 'not responding' : 'unread, last 7 days';
+      }
+    });
+  });
+
   if (!state.sources.length) {
-    wrap.innerHTML = '<button class="tile" data-go="cfg" style="grid-column:1/-1">'
-      + '<div><div class="big zero">+</div></div>'
-      + '<div><div class="name">Connect an account</div>'
-      + '<div class="sub">no inboxes linked yet</div></div></button>';
-    return;
+    list.push({ key: 'connect', name: 'Connect an account', go: 'cfg',
+      value: function () { return '+'; }, sub: function () { return 'no inboxes linked yet'; } });
   }
-  wrap.innerHTML = state.sources.map(function (s) {
-    var box = state.cache.inboxes && state.cache.inboxes[s.id];
-    var n = inboxItems(s.id).length;
-    var broken = box && box.available === false;
-    var c = sourceColour(s);
-    return '<button class="tile" data-inbox="' + esc(s.id) + '"'
-      + ' style="box-shadow:var(--lens),var(--lift),inset 3px 0 0 ' + c + '">'
-      + '<div><div class="big' + (n ? '' : ' zero') + '"'
-      + (n ? ' style="color:' + c + ';text-shadow:0 0 14px ' + c + '66"' : '') + '>'
-      + (broken ? '!' : n) + '</div></div>'
-      + '<div><div class="name">' + esc(s.label) + '</div>'
-      + '<div class="sub">' + (broken ? 'not responding' : 'unread, last 7 days') + '</div></div>'
+
+  [['tasks','Tasks'],['bills','Bills'],['habits','Habits'],['shared','Shared']]
+    .forEach(function (m) {
+      list.push({ key: m[0], name: m[1], off: true,
+        value: function () { return '—'; }, sub: function () { return 'module offline'; } });
+    });
+
+  return list;
+}
+
+function orderedWidgets() {
+  var all = widgets();
+  var layout = loadLayout();
+  var byKey = {};
+  all.forEach(function (w) { byKey[w.key] = w; });
+
+  var out = [];
+  layout.forEach(function (item) {
+    var w = byKey[item.key];
+    if (!w) return;                 // account removed since layout was saved
+    w.size = item.size || 'sm';
+    out.push(w);
+    delete byKey[item.key];
+  });
+  all.forEach(function (w) {        // anything new goes on the end
+    if (byKey[w.key]) { w.size = w.size || 'sm'; out.push(w); }
+  });
+  return out;
+}
+
+function renderGrid() {
+  var wrap = $('#grid');
+  var ws = orderedWidgets();
+
+  wrap.innerHTML = ws.map(function (w) {
+    var v = w.value();
+    var zero = (v === 0 || v === '—');
+    var c = w.colour;
+    return '<button class="tile" data-key="' + esc(w.key) + '" data-size="' + esc(w.size) + '"'
+      + (w.off ? ' disabled' : '')
+      + (w.go ? ' data-go="' + esc(w.go) + '"' : '')
+      + (w.inbox ? ' data-inbox="' + esc(w.inbox) + '"' : '')
+      + (c ? ' style="box-shadow:var(--lens),var(--lift),inset 3px 0 0 ' + c + '"' : '')
+      + '>'
+      + '<span class="sizebtn" data-resize="' + esc(w.key) + '" title="Resize">⤢</span>'
+      + '<div><div class="big' + (zero ? ' zero' : '') + '"'
+      + (c && !zero ? ' style="color:' + c + ';text-shadow:0 0 14px ' + c + '66"' : '') + '>'
+      + esc(v) + '</div></div>'
+      + '<div><div class="name">' + esc(w.name) + '</div>'
+      + (w.sub2 ? '<div class="sub" style="color:var(--cyan-dim)">' + esc(w.sub2) + '</div>' : '')
+      + '<div class="sub">' + esc(w.sub()) + '</div></div>'
       + '</button>';
   }).join('');
+
+  // Persist whatever is actually on screen, so ordering survives a reload
+  saveLayout(ws.map(function (w) { return { key: w.key, size: w.size }; }));
+}
+
+/* ---------------------------------------------------------- edit mode */
+
+function setEditing(on) {
+  document.body.classList.toggle('editing', on);
+  $('#btnEdit').textContent = on ? 'DONE' : 'EDIT';
+  $('#gridNote').textContent = on
+    ? 'Drag tiles to reorder. Tap ⤢ to cycle size: half width, full width, tall. Saved on this device.'
+    : 'Offline modules are placeholders. Each one gets built and switched on separately.';
+}
+
+function cycleSize(key) {
+  var layout = loadLayout();
+  var item = layout.filter(function (i) { return i.key === key; })[0];
+  if (!item) return;
+  item.size = SIZES[(SIZES.indexOf(item.size) + 1) % SIZES.length];
+  saveLayout(layout);
+  renderGrid();
+}
+
+/*
+ * Pointer events rather than HTML5 drag-and-drop: dnd doesn't fire on touch,
+ * and this needs to work on a phone first.
+ */
+var drag = null;
+
+function gridPointerDown(e) {
+  if (!document.body.classList.contains('editing')) return;
+  if (e.target.closest('[data-resize]')) return;
+  var tile = e.target.closest('.tile');
+  if (!tile) return;
+  e.preventDefault();
+  drag = { el: tile, key: tile.dataset.key };
+  tile.classList.add('dragging');
+  tile.setPointerCapture && tile.setPointerCapture(e.pointerId);
+}
+
+function gridPointerMove(e) {
+  if (!drag) return;
+  e.preventDefault();
+  drag.el.style.pointerEvents = 'none';
+  var under = document.elementFromPoint(e.clientX, e.clientY);
+  drag.el.style.pointerEvents = '';
+  var target = under && under.closest ? under.closest('.tile') : null;
+  $$('.tile').forEach(function (t) { t.classList.remove('dropzone'); });
+  if (!target || target === drag.el) return;
+  target.classList.add('dropzone');
+
+  var grid = $('#grid');
+  var kids = Array.prototype.slice.call(grid.children);
+  var from = kids.indexOf(drag.el);
+  var to = kids.indexOf(target);
+  if (from < 0 || to < 0) return;
+  grid.insertBefore(drag.el, from < to ? target.nextSibling : target);
+}
+
+function gridPointerUp() {
+  if (!drag) return;
+  drag.el.classList.remove('dragging');
+  $$('.tile').forEach(function (t) { t.classList.remove('dropzone'); });
+  drag = null;
+
+  var sizes = {};
+  loadLayout().forEach(function (i) { sizes[i.key] = i.size; });
+  saveLayout($$('#grid .tile').map(function (t) {
+    return { key: t.dataset.key, size: sizes[t.dataset.key] || t.dataset.size || 'sm' };
+  }));
 }
 
 function renderSources() {
@@ -865,9 +1025,6 @@ function renderHome() {
   var high = rows.filter(function (r) {
     return r.priority === 'High' && r.status !== 'Closed';
   }).length;
-
-  setCount('#tCountTriage', pending);
-  $('#tSubTriage').textContent = high ? (high + ' high priority open') : 'enquiries awaiting you';
 
   var mail = totalUnread();
 
@@ -1296,6 +1453,7 @@ function renderThemes() {
 /* ==================================================================== */
 
 function go(view) {
+  if (view !== 'home') setEditing(false);   // never leave edit mode running in the background
   state.view = view;
   ['home', 'triage', 'inbox', 'cfg'].forEach(function (v) {
     $('#view-' + v).classList.toggle('hide', v !== view);
@@ -1313,6 +1471,11 @@ function toast(msg, kind) {
 }
 
 document.addEventListener('click', function (e) {
+  var rs = e.target.closest('[data-resize]');
+  if (rs) { e.stopPropagation(); cycleSize(rs.dataset.resize); return; }
+  // In edit mode a tap is for arranging, never for navigating
+  if (document.body.classList.contains('editing') && e.target.closest('.tile')) return;
+
   var t = e.target.closest('[data-go]');
   if (t && !t.disabled) { go(t.dataset.go); return; }
   var f = e.target.closest('[data-filter]');
@@ -1337,6 +1500,16 @@ function removeSource(id) {
 }
 
 $('#triageList').addEventListener('click', onCardClick);
+
+$('#btnEdit').addEventListener('click', function () {
+  var on = !document.body.classList.contains('editing');
+  setEditing(on);
+  if (!on) toast('Layout saved', 'good');
+});
+$('#grid').addEventListener('pointerdown', gridPointerDown);
+$('#grid').addEventListener('pointermove', gridPointerMove);
+$('#grid').addEventListener('pointerup', gridPointerUp);
+$('#grid').addEventListener('pointercancel', gridPointerUp);
 $('#btnBack').addEventListener('click', function () { go('home'); });
 $('#btnSync').addEventListener('click', function () { sync().then(function(){ toast('Synced','good'); }); });
 $('#btnCfg').addEventListener('click', function () { go(state.view === 'cfg' ? 'home' : 'cfg'); });
